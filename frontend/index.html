@@ -380,6 +380,31 @@
       50%       { opacity: 0; }
     }
 
+    .thinking {
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+      color: var(--text-dim);
+      font-size: 13px;
+      font-style: italic;
+    }
+
+    .thinking span {
+      display: inline-block;
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: var(--amber);
+      animation: thinking-dot 1.2s infinite;
+    }
+    .thinking span:nth-child(2) { animation-delay: 0.2s; }
+    .thinking span:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes thinking-dot {
+      0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); }
+      40%           { opacity: 1;   transform: scale(1.2); }
+    }
+
     .bubble-text p            { margin-bottom: 0.3em; }
     .bubble-text p:last-child { margin-bottom: 0; }
     .bubble-text ul,
@@ -1038,7 +1063,7 @@ ${turnsHtml}
       asstTurn.innerHTML = `
         <div class="bubble-assistant">
           <div class="bubble-assistant-inner">
-            <div class="bubble-text" id="current-bubble"><span class="cursor"></span></div>
+            <div class="bubble-text" id="current-bubble"><span class="thinking">Thinking<span></span><span></span><span></span></span></div>
           </div>
         </div>`;
       thread.appendChild(asstTurn);
@@ -1064,6 +1089,7 @@ ${turnsHtml}
           const cur = document.createElement('span');
           cur.className = 'cursor';
           textEl.appendChild(cur);
+          scrollThread();
         });
 
         es.addEventListener('done', e => {
