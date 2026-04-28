@@ -337,7 +337,7 @@ class FAISSDatabase:
             ns_score = _normalize(s_score, s_min, s_max)
 
             # Combined score: 60% Dense, 40% Sparse
-            final_score = (0.6 * nd_score) + (0.4 * ns_score)
+            final_score = (0.7 * nd_score) + (0.3 * ns_score)
 
             results.append({
                 "score":        float(final_score),

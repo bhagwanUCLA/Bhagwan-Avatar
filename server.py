@@ -930,18 +930,11 @@ def clear_all_sessions(_: AdminDep):
     return {"cleared": "all"}
 
 @app.get("/sessions/history")
-def list_sessions_history(_: AdminDep):
-    """Return all chat sessions with their full message history."""
-    session_ids = _session_store.list_all()
-    sessions = []
-    for sid in session_ids:
-        sessions.append({
-            "session_id": sid,
-            "history": _session_store.get(sid)
-        })
-    # Sort by session ID desc assuming IDs might contain timestamps/UUIDs
-    sessions.sort(key=lambda x: x["session_id"], reverse=True)
-    return {"sessions": sessions}
+def list_sessions_history(_: AdminDep, limit: int = 20, offset: int = 0):
+    """Return paginated chat sessions ordered by most recent first."""
+    result = _session_store.list_paginated(limit=limit, offset=offset)
+    result["has_more"] = (offset + limit) < result["total"]
+    return result
 
 
 # ---------------------------------------------------------------------------

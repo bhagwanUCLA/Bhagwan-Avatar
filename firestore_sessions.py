@@ -72,6 +72,18 @@ class InMemorySessionStore:
     def list_all(self) -> list[str]:
         return list(self._store.keys())
 
+    def list_paginated(self, limit: int = 20, offset: int = 0) -> dict:
+        items = list(self._store.items())
+        total = len(items)
+        page = items[offset:offset + limit]
+        return {
+            "sessions": [
+                {"session_id": sid, "updated_at": None, "history": list(hist)}
+                for sid, hist in page
+            ],
+            "total": total,
+        }
+
 
 # ---------------------------------------------------------------------------
 # Firestore store  (production on GCP)
@@ -150,3 +162,29 @@ class FirestoreSessionStore:
         except Exception as exc:
             logger.error("Firestore list_all() failed: %s", exc)
             return []
+
+    def list_paginated(self, limit: int = 20, offset: int = 0) -> dict:
+        """Return paginated sessions ordered by most recent (updated_at desc)."""
+        from google.cloud import firestore as _fs
+        try:
+            col = self._db.collection(self.COLLECTION)
+            total = len([doc.id for doc in col.select([]).stream()])
+            query = (
+                col.order_by("updated_at", direction=_fs.Query.DESCENDING)
+                .offset(offset)
+                .limit(limit)
+            )
+            sessions = []
+            for doc in query.stream():
+                data = doc.to_dict() or {}
+                updated = data.get("updated_at")
+                updated_iso = updated.isoformat() if hasattr(updated, "isoformat") else None
+                sessions.append({
+                    "session_id": doc.id,
+                    "updated_at": updated_iso,
+                    "history": data.get("history", []),
+                })
+            return {"sessions": sessions, "total": total}
+        except Exception as exc:
+            logger.error("Firestore list_paginated() failed: %s", exc)
+            return {"sessions": [], "total": 0}
