@@ -383,10 +383,16 @@
     .thinking {
       display: inline-flex;
       align-items: center;
-      gap: 2px;
+      gap: 3px;
       color: var(--text-dim);
       font-size: 13px;
       font-style: italic;
+    }
+
+    .thinking::after {
+      content: '';
+      display: inline-block;
+      width: 6px;
     }
 
     .thinking span {
@@ -603,17 +609,22 @@
 
     /* ── Mobile ───────────────────────────────────────────────────── */
     @media (max-width: 600px) {
-      .hero-greeting  { font-size: 14px; }
-      .hero-sub       { font-size: 12px; }
-      .hero-name      { font-size: 15px; }
-      .hero-avatar    { width: 88px; height: 88px; }
-      #thread         { padding: 14px 12px 10px; }
-      .bubble-user    { max-width: 88%; }
+      html, body        { font-size: 16px; }
+      .hero-greeting    { font-size: 17px; }
+      .hero-sub         { font-size: 14px; }
+      .hero-name        { font-size: 17px; }
+      .hero-avatar      { width: 88px; height: 88px; }
+      #thread           { padding: 14px 12px 10px; gap: 16px; }
+      .bubble-user      { max-width: 88%; font-size: 15px; padding: 11px 15px; }
+      .bubble-text      { font-size: 15px; line-height: 1.7; }
       .bubble-assistant { max-width: 100%; }
-      #floating-avatar { width: 36px; height: 36px; top: calc(var(--header-h) + 8px); left: 12px; }
-      #toast          { bottom: 24px; left: 16px; right: 16px; }
-      /* Shrink download button label on mobile */
+      #floating-avatar  { width: 36px; height: 36px; top: calc(var(--header-h) + 8px); left: 12px; }
+      #toast            { bottom: 24px; left: 16px; right: 16px; }
       #download-btn .dl-label { display: none; }
+      .thinking         { font-size: 15px; gap: 4px; }
+      .thinking span    { width: 6px; height: 6px; }
+      #query-input-hero,
+      #query-input      { font-size: 16px; }
     }
   </style>
 </head>
