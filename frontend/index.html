@@ -1083,7 +1083,6 @@ ${turnsHtml}
       const params = new URLSearchParams({
         question,
         session_id: SESSION_ID,
-        top_k: '10',
         ...(document.getElementById('cfg-section')?.value && { section_filter: document.getElementById('cfg-section').value }),
       });
 

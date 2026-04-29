@@ -54,7 +54,7 @@ from pwdlib import PasswordHash
 from pydantic import BaseModel, Field
 import tempfile
 import zipfile
-import shutil
+
 
 from orchestrator import RAGOrchestrator
 from rag_query import RAG
@@ -277,7 +277,7 @@ _DEFAULT_CONFIG = {
     "follow_external":   True,
     "device":            "cpu",
     "model":             "claude-sonnet-4-6",
-    "top_k":             10,
+    "top_k":             6,
     "gcs_bucket":        os.environ.get("GCS_BUCKET", ""),  # e.g. "bhagwan-rag-store"
 }
 
