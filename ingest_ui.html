@@ -66,6 +66,9 @@
   .row { display: flex; gap: 12px; }
   .row > * { flex: 1; }
 
+  .video-row { display: flex; align-items: center; gap: 8px; }
+  .video-row input { flex: 1; min-width: 0; }
+
   .checks {
     display: flex; flex-wrap: wrap; gap: 6px 14px;
     padding: 10px 12px; background: var(--bg);
@@ -130,6 +133,18 @@
   .doc-table .btn-del:hover { background: var(--red-bg); }
   .doc-title-link { color: var(--blue); text-decoration: none; font-weight: 500; }
   .doc-title-link:hover { text-decoration: underline; }
+
+  @media (max-width: 640px) {
+    body { padding: 12px 8px; }
+    .container { padding: 0; }
+    .paste-grid { grid-template-columns: 1fr; }
+    .row { flex-direction: column; }
+    .card { padding: 16px 14px; }
+    h1 { font-size: 18px; }
+    h2 { font-size: 15px; }
+    input, select, textarea { font-size: 16px; }
+    .btn { padding: 10px 16px; font-size: 14px; }
+  }
 </style>
 </head>
 <body>

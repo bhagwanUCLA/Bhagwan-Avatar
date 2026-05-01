@@ -4,6 +4,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
   <title>Professor Bhagwan Chowdhry</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
@@ -625,6 +626,21 @@
       .thinking span    { width: 6px; height: 6px; }
       #query-input-hero,
       #query-input      { font-size: 16px; }
+
+      #app {
+        min-height: -webkit-fill-available;
+      }
+      #input-area {
+        position: sticky;
+        bottom: 0;
+        padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
+      }
+      #send-row {
+        padding: 12px 12px 12px 16px;
+        border-radius: 18px;
+      }
+      #query-input { padding: 6px 0; }
+      .btn-send-circle { width: 42px; height: 42px; }
     }
   </style>
 </head>
