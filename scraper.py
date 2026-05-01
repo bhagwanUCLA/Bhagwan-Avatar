@@ -148,12 +148,6 @@ def _is_youtube(url: str) -> bool:
     return bool(_YT_PATTERN.search(url or ""))
 
 
-def _is_youtube_playlist(url: str) -> bool:
-    if not url:
-        return False
-    qs = urlparse(url).query or ""
-    return bool(_YT_PLAYLIST_PATTERN.search(url)) and "list=" in qs and "watch?v=" not in url.split("?")[0]
-
 
 def _is_pdf_url(url: str) -> bool:
     return bool(url and url.lower().split("?")[0].rstrip("/").endswith(".pdf"))
@@ -361,30 +355,66 @@ class ScraperCache:
     # ------------------------------------------------------------------
 
     def get_video(self, url: str) -> Optional[dict]:
-        """Returns {"title": ..., "summary": ...} or None."""
+        """Returns {"title": ..., "transcript": ...} or None."""
         path = self._videos_dir / f"{_url_hash(url)}.json"
         if not path.exists():
             return None
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(data, str):
-                return {"title": "", "summary": data}
-            return data
+                return {"title": "", "transcript": data}
+            title   = data.get("title", "")
+            content = data.get("transcript") or data.get("summary", "")  # backward compat
+            return {"title": title, "transcript": content}
         except Exception as exc:
             logger.warning("cache read error (video) %s: %s", url, exc)
             return None
 
-    def set_video(self, url: str, title: str, summary: str) -> None:
+    def set_video(self, url: str, title: str, transcript: str) -> None:
         path = self._videos_dir / f"{_url_hash(url)}.json"
         try:
             path.write_text(json.dumps({
-                "url":       url,
-                "title":     title,
-                "summary":   summary,
-                "cached_at": _now_iso(),
+                "url":        url,
+                "title":      title,
+                "transcript": transcript,
+                "cached_at":  _now_iso(),
             }, ensure_ascii=False), encoding="utf-8")
         except Exception as exc:
             logger.warning("cache write error (video) %s: %s", url, exc)
+
+    # ------------------------------------------------------------------
+    # Local file cache  (dedicated — avoids abusing the page cache format)
+    # ------------------------------------------------------------------
+
+    def get_local_file(self, url: str) -> Optional[dict]:
+        """Returns {"title": ..., "text": ...} or None."""
+        path = self._pages_dir / f"{_url_hash(url)}.json"
+        if not path.exists():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if data.get("content_type") != "x-local-file":
+                return None
+            # backward compat: old entries stored title in "final_url", text in "html"
+            title = data.get("title") or data.get("final_url", "")
+            text  = data.get("text")  or data.get("html", "")
+            return {"title": title, "text": text}
+        except Exception as exc:
+            logger.warning("cache read error (local file) %s: %s", url, exc)
+            return None
+
+    def set_local_file(self, url: str, title: str, text: str) -> None:
+        path = self._pages_dir / f"{_url_hash(url)}.json"
+        try:
+            path.write_text(json.dumps({
+                "url":          url,
+                "title":        title,
+                "text":         text,
+                "content_type": "x-local-file",
+                "cached_at":    _now_iso(),
+            }, ensure_ascii=False), encoding="utf-8")
+        except Exception as exc:
+            logger.warning("cache write error (local file) %s: %s", url, exc)
 
     # ------------------------------------------------------------------
     # Skip list  (URLs that have been manually ingested — never re-scrape)
@@ -528,28 +558,58 @@ class PageData:
 # ---------------------------------------------------------------------------
 
 class WebsiteCrawler:
-    def __init__(self, root_url: str, max_pages: int = 50, delay: float = 0.5):
+    def __init__(self, root_url: str, max_pages: int = 50, delay: float = 0.5, cache: Optional["ScraperCache"] = None):
         self.root_url  = root_url
         self.max_pages = max_pages
         self.delay     = delay
+        self._cache    = cache
         self.visited:  set[str]       = set()
         self.pages:    list[PageData] = []
         self._browser  = None
         self._pw       = None
 
     async def crawl(self, url: str, max_depth: int = 2, current_depth: int = 0):
-        # Launch browser once on the very first call
-        if self._pw is None:
-            self._pw      = await async_playwright().start()
-            self._browser = await self._pw.chromium.launch(headless=True)
-
         url = url.split("#")[0].rstrip("/")
         if current_depth > max_depth or len(self.visited) >= self.max_pages or url in self.visited:
             return
 
         self.visited.add(url)
-        logger.info("  [Playwright] %s", url)
 
+        # ── Cache hit: reconstruct PageData from stored HTML ─────────────
+        if self._cache:
+            cached = self._cache.get_page(url)
+            if cached and not _is_corrupt_html(cached.get("html", "")):
+                logger.info("  [cache HIT] %s", url)
+                soup = BeautifulSoup(cached["html"], "html.parser")
+                for s in soup(["script", "style", "nav", "footer", "header"]):
+                    s.decompose()
+                heading = (soup.title.get_text(strip=True) or url) if soup.title else url
+                lines   = [
+                    p.get_text(strip=True)
+                    for p in soup.find_all(["p", "h1", "h2", "h3", "li"])
+                    if p.get_text(strip=True)
+                ]
+                links = []
+                for a in soup.find_all("a", href=True):
+                    href = urljoin(url, a["href"]).split("#")[0]
+                    if urlparse(href).netloc == urlparse(self.root_url).netloc:
+                        links.append({"url": href})
+                self.pages.append(PageData(url=url, heading=heading, content_lines=lines, links=links))
+                for link in links:
+                    await self.crawl(link["url"], max_depth, current_depth + 1)
+                if current_depth == 0 and self._browser:
+                    await self._browser.close()
+                    await self._pw.stop()
+                    self._browser = None
+                    self._pw      = None
+                return
+
+        # ── Launch browser once on the very first Playwright fetch ───────
+        if self._pw is None:
+            self._pw      = await async_playwright().start()
+            self._browser = await self._pw.chromium.launch(headless=True)
+
+        logger.info("  [Playwright] %s", url)
         page = await self._browser.new_page(user_agent=_DEFAULT_HEADERS["User-Agent"])
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=30000)
@@ -567,7 +627,10 @@ class WebsiteCrawler:
             """)
 
             content = await page.content()
-            soup    = BeautifulSoup(content, "html.parser")
+            if self._cache:
+                self._cache.set_page(url, final_url=url, content=content, content_type="text/html")
+
+            soup = BeautifulSoup(content, "html.parser")
             for s in soup(["script", "style", "nav", "footer", "header"]):
                 s.decompose()
 
@@ -707,14 +770,13 @@ class PortfolioScraper:
         self.cache           = cache
 
         try:
-            self._gemini = genai.Client(api_key=gemini_api_key) if gemini_api_key else None
+            self.gemini_client = genai.Client(api_key=gemini_api_key) if gemini_api_key else None
         except Exception:
-            self._gemini = None
+            self.gemini_client = None
 
-        self._cleaner    = GeminiCleaner(self._gemini, gemini_model)
-        self._yt_scraper = YouTubeChannelScraper(youtube_api_key)
+        self._cleaner     = GeminiCleaner(self.gemini_client, gemini_model)
+        self._yt_scraper  = YouTubeChannelScraper(youtube_api_key)
         self._doc_counter = 0
-        self._visited     = set()
         self._lock        = threading.Lock()
 
     # ------------------------------------------------------------------
@@ -724,30 +786,12 @@ class PortfolioScraper:
     def scrape_portfolio(self, root_url: str) -> list[ScrapedDocument]:
         root_url = root_url.rstrip("/")
 
-        # 1. YouTube channel or playlist URL
-        if "youtube.com" in root_url and (
-            "/channel/" in root_url or "/@" in root_url or "list=" in root_url
-        ):
-            pid = None
-            if "list=" in root_url:
-                pid = urlparse(root_url).query.split("list=")[1].split("&")[0]
-            else:
-                pid = self._yt_scraper.get_uploads_playlist_id(root_url)
+        # 1. YouTube channel, playlist, or single video
+        if "youtube.com" in root_url or _is_youtube(root_url):
+            return self._expand_to_video_docs(root_url, "video")
 
-            if pid:
-                vids = self._yt_scraper.get_playlist_video_ids(pid, self.max_crawl_pages)
-                docs = []
-                for v in vids:
-                    docs.extend(self._summarise_video(f"https://www.youtube.com/watch?v={v}", "video"))
-                return docs
-            return []
-
-        # 2. Single YouTube video
-        if _is_youtube(root_url):
-            return self._summarise_video(root_url, "video")
-
-        # 3. Profile website
-        crawler = WebsiteCrawler(root_url, max_pages=self.max_crawl_pages, delay=self.delay)
+        # 2. Profile website
+        crawler = WebsiteCrawler(root_url, max_pages=self.max_crawl_pages, delay=self.delay, cache=self.cache)
         asyncio.run(crawler.crawl(root_url))
 
         docs         = []
@@ -767,7 +811,7 @@ class PortfolioScraper:
         return docs
 
     def process_section(self, url: str, name: str) -> list[ScrapedDocument]:
-        crawler = WebsiteCrawler(url, max_pages=1, delay=self.delay)
+        crawler = WebsiteCrawler(url, max_pages=1, delay=self.delay, cache=self.cache)
         asyncio.run(crawler.crawl(url, max_depth=0))
         if not crawler.pages:
             return []
@@ -777,20 +821,35 @@ class PortfolioScraper:
     def summarise_videos(self, urls: list[str], section: str = "video") -> list[ScrapedDocument]:
         docs = []
         for u in urls:
-            docs.extend(self._summarise_video(u, section))
+            docs.extend(self._expand_to_video_docs(u, section))
         return docs
 
     # ------------------------------------------------------------------
-    # Internal: video summarisation
+    # Internal: video helpers
     # ------------------------------------------------------------------
+
+    def _expand_to_video_docs(self, url: str, section: str) -> list[ScrapedDocument]:
+        """Expand a channel/playlist URL to per-video docs, or handle a single video."""
+        if "youtube.com" in url and ("/channel/" in url or "/@" in url or "list=" in url):
+            if "list=" in url:
+                pid = urlparse(url).query.split("list=")[1].split("&")[0]
+            else:
+                pid = self._yt_scraper.get_uploads_playlist_id(url)
+            if pid:
+                vids = self._yt_scraper.get_playlist_video_ids(pid, self.max_crawl_pages)
+                return [doc for v in vids
+                        for doc in self._summarise_video(f"https://www.youtube.com/watch?v={v}", section)]
+            return []
+        return self._summarise_video(url, section)
 
     def _summarise_video(self, url: str, section: str) -> list[ScrapedDocument]:
         if self.cache:
             c = self.cache.get_video(url)
             if c:
-                return [self._make_doc(c["title"], section, url, c["summary"], "video_summary")]
+                return [self._make_doc(c["title"], section, url, c["transcript"], "video_summary")]
 
-        vid        = urlparse(url).query.split("v=")[1].split("&")[0] if "v=" in url else url.split("/")[-1]
+        match = _YT_PATTERN.search(url)
+        vid = match.group(1) if match else url.split("/")[-1].split("?")[0]
         title      = self._yt_scraper.get_video_title(vid) or f"Video {vid}"
         transcript = self._yt_scraper.get_transcript(vid)
 
@@ -800,155 +859,30 @@ class PortfolioScraper:
             return [self._make_doc(title, section, url, transcript, "video_summary")]
 
         # Fallback: ask Gemini to summarise the video directly via its URL
-        if not self._gemini:
+        if not self.gemini_client:
             return []
         try:
-            res = self._gemini.models.generate_content(
+            res = self.gemini_client.models.generate_content(
                 model=self.gemini_model,
                 contents=[
-                    types.Part(file_data=types.FileData(file_uri=url)),
-                    "Provide TITLE: <title> and SUMMARY: <transcript/summary>",
+                    types.Part(
+                        file_data=types.FileData(
+                            file_uri=url,
+                            mime_type="video/*",   # ✅ required for YouTube URLs
+                        )
+                    ),
+                    types.Part(                    # ✅ must be a Part, not a plain string
+                        text="Provide TITLE: <title> on the first line, then the full transcript or summary on the following lines."
+                    ),
                 ],
             )
             t, s = _split_gemini_title(res.text, title)
             if self.cache:
                 self.cache.set_video(url, t, s)
             return [self._make_doc(t, section, url, s, "video_summary")]
-        except Exception:
+        except Exception as e:
+            logger.warning("Gemini video fallback failed for %s: %s", url, e)
             return []
-
-    # ------------------------------------------------------------------
-    # Internal: Gemini file extraction  (upload → generate → delete)
-    # ------------------------------------------------------------------
-
-    def _file_stage3_gemini(
-        self,
-        file_bytes: bytes,
-        source_url: str,
-        filename: Optional[str] = None,
-        mime_hint: Optional[str] = None,
-        fallback_title: str = "",
-    ) -> tuple[str, str]:
-        """
-        Upload a file to the Gemini Files API, extract structured content, then delete it.
-
-        Every prompt instructs Gemini to output:
-            TITLE: <document title>
-            <rest of extracted content>
-
-        Returns (title, content). Both are empty strings on failure.
-        """
-        if not self._gemini:
-            logger.warning("Gemini client not configured; cannot extract file: %s", source_url)
-            return fallback_title, ""
-
-        tmp_path: Optional[str] = None
-        uploaded = None
-        try:
-            suffix = ""
-            if filename and "." in filename:
-                suffix = "." + filename.split(".")[-1]
-            elif source_url and "." in source_url.split("/")[-1]:
-                suffix = "." + source_url.split("/")[-1].split("?")[0].split(".")[-1]
-
-            fd, tmp_path = tempfile.mkstemp(suffix=suffix or "")
-            os.close(fd)
-            with open(tmp_path, "wb") as fh:
-                fh.write(file_bytes)
-
-            logger.info("  [Gemini file] uploading %s (%d KB)", source_url, len(file_bytes) // 1024)
-            uploaded = self._gemini.files.upload(file=tmp_path)
-
-            ext       = (filename or source_url or "").lower().split("?")[0]
-            mime_type = mime_hint or ""
-
-            if ext.endswith(".pdf") or (mime_hint and "pdf" in mime_hint):
-                mime_type = "application/pdf"
-                prompt = (
-                    "You are extracting content from a PDF document.\n\n"
-                    "Output format (follow exactly):\n"
-                    "TITLE: <the document's actual title>\n\n"
-                    "<full extracted text — preserve headings, paragraphs, tables, bullet lists; "
-                    "use LaTeX for mathematical formulas; do not summarise or omit any content>"
-                )
-            elif (ext.endswith((".xlsx", ".xls", ".xlsm", ".xlsb", ".csv"))
-                  or (mime_hint and "spreadsheet" in mime_hint)
-                  or ext.endswith(".ods")):
-                prompt = (
-                    "You are extracting content from a spreadsheet.\n\n"
-                    "Output format (follow exactly):\n"
-                    "TITLE: <the spreadsheet's name or main topic>\n\n"
-                    "<for each sheet, output a markdown table or CSV block with the sheet name as a heading>"
-                )
-            elif ext.endswith((".docx", ".doc", ".odt")) or (mime_hint and "word" in mime_hint):
-                prompt = (
-                    "You are extracting content from a Word document.\n\n"
-                    "Output format (follow exactly):\n"
-                    "TITLE: <the document's actual title or subject>\n\n"
-                    "<full text — preserve headings, paragraphs, lists and tables; do not summarise>"
-                )
-            elif ext.endswith((".pptx", ".ppt")) or (mime_hint and "presentation" in mime_hint):
-                prompt = (
-                    "You are extracting content from a presentation.\n\n"
-                    "Output format (follow exactly):\n"
-                    "TITLE: <the presentation's title>\n\n"
-                    "<slide-by-slide content: slide number, title and bullet points>"
-                )
-            else:
-                prompt = (
-                    "You are extracting content from a document.\n\n"
-                    "Output format (follow exactly):\n"
-                    "TITLE: <the document's actual title or main topic>\n\n"
-                    "<full extracted content — preserve headings, paragraphs, lists and tables>"
-                )
-
-            raw_text = ""
-            try:
-                contents = types.Content(parts=[
-                    types.Part(file_data=types.FileData(
-                        file_uri=getattr(uploaded, "uri", getattr(uploaded, "name", None)),
-                        mime_type=mime_type or None,
-                    )),
-                    types.Part(text=prompt),
-                ])
-                response = self._gemini.models.generate_content(
-                    model=self.gemini_model,
-                    contents=contents,
-                )
-                raw_text = getattr(response, "text", "") or ""
-            except Exception as exc:
-                logger.warning("generate_content(parts=…) failed; trying fallback: %s", exc)
-                try:
-                    response = self._gemini.models.generate_content(
-                        model=self.gemini_model,
-                        contents=[uploaded, prompt],
-                    )
-                    raw_text = getattr(response, "text", "") or ""
-                except Exception as exc2:
-                    logger.error("Gemini generate_content failed for %s: %s", source_url, exc2)
-
-            # Best-effort delete uploaded file
-            try:
-                if getattr(uploaded, "name", None) and hasattr(self._gemini.files, "delete"):
-                    self._gemini.files.delete(name=uploaded.name)
-            except Exception:
-                pass
-
-            if not raw_text:
-                return fallback_title, ""
-
-            title, content = _split_gemini_title(raw_text, fallback=fallback_title)
-            return title, _clean_text(content)
-
-        except Exception as exc:
-            logger.error("Gemini file extraction failed [%s]: %s", source_url, exc)
-            return fallback_title, ""
-        finally:
-            if tmp_path and os.path.exists(tmp_path):
-                try:
-                    os.remove(tmp_path)
-                except Exception:
-                    pass
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -962,9 +896,152 @@ class PortfolioScraper:
 
     def reset(self):
         with self._lock:
-            self._visited.clear()
             self._doc_counter = 0
 
+
+# ---------------------------------------------------------------------------
+# Gemini file extraction  (module-level — upload → generate → delete)
+# ---------------------------------------------------------------------------
+
+def extract_file_with_gemini(
+    gemini_client,
+    model: str,
+    file_bytes: bytes,
+    source_url: str,
+    filename: Optional[str] = None,
+    mime_hint: Optional[str] = None,
+    fallback_title: str = "",
+) -> tuple[str, str]:
+    """
+    Upload a file to the Gemini Files API, extract structured content, then delete it.
+
+    Every prompt instructs Gemini to output:
+        TITLE: <document title>
+        <rest of extracted content>
+
+    Returns (title, content). Both are empty strings on failure.
+    """
+    if not gemini_client:
+        logger.warning("Gemini client not configured; cannot extract file: %s", source_url)
+        return fallback_title, ""
+
+    tmp_path: Optional[str] = None
+    uploaded = None
+    try:
+        suffix = ""
+        if filename and "." in filename:
+            suffix = "." + filename.split(".")[-1]
+        elif source_url and "." in source_url.split("/")[-1]:
+            suffix = "." + source_url.split("/")[-1].split("?")[0].split(".")[-1]
+
+        fd, tmp_path = tempfile.mkstemp(suffix=suffix or "")
+        os.close(fd)
+        with open(tmp_path, "wb") as fh:
+            fh.write(file_bytes)
+
+        logger.info("  [Gemini file] uploading %s (%d KB)", source_url, len(file_bytes) // 1024)
+        uploaded = gemini_client.files.upload(file=tmp_path)
+
+        import time
+        while True:
+            file_info = gemini_client.files.get(name=uploaded.name)
+            state_str = str(file_info.state).upper()
+            if "PROCESSING" in state_str:
+                logger.info("  [Gemini file] Status: %s. Retrying in 5 seconds...", state_str)
+                time.sleep(5)
+            elif "FAILED" in state_str:
+                logger.error("  [Gemini file] File processing failed for %s", source_url)
+                return fallback_title, ""
+            else:
+                break
+
+        ext       = (filename or source_url or "").lower().split("?")[0]
+        mime_type = mime_hint or ""
+
+        if ext.endswith(".pdf") or (mime_hint and "pdf" in mime_hint):
+            mime_type = "application/pdf"
+            prompt = (
+                "You are extracting content from a PDF document.\n\n"
+                "Output format (follow exactly):\n"
+                "TITLE: <the document's actual title>\n\n"
+                "<full extracted text — preserve headings, paragraphs, tables, bullet lists; "
+                "use LaTeX for mathematical formulas; do not summarise or omit any content>"
+            )
+        elif (ext.endswith((".xlsx", ".xls", ".xlsm", ".xlsb", ".csv"))
+              or (mime_hint and "spreadsheet" in mime_hint)
+              or ext.endswith(".ods")):
+            prompt = (
+                "You are extracting content from a spreadsheet.\n\n"
+                "Output format (follow exactly):\n"
+                "TITLE: <the spreadsheet's name or main topic>\n\n"
+                "<for each sheet, output a markdown table or CSV block with the sheet name as a heading>"
+            )
+        elif ext.endswith((".docx", ".doc", ".odt")) or (mime_hint and "word" in mime_hint):
+            prompt = (
+                "You are extracting content from a Word document.\n\n"
+                "Output format (follow exactly):\n"
+                "TITLE: <the document's actual title or subject>\n\n"
+                "<full text — preserve headings, paragraphs, lists and tables; do not summarise>"
+            )
+        elif ext.endswith((".pptx", ".ppt")) or (mime_hint and "presentation" in mime_hint):
+            prompt = (
+                "You are extracting content from a presentation.\n\n"
+                "Output format (follow exactly):\n"
+                "TITLE: <the presentation's title>\n\n"
+                "<slide-by-slide content: slide number, title and bullet points>"
+            )
+        else:
+            prompt = (
+                "You are extracting content from a document.\n\n"
+                "Output format (follow exactly):\n"
+                "TITLE: <the document's actual title or main topic>\n\n"
+                "<full extracted content — preserve headings, paragraphs, lists and tables>"
+            )
+
+        raw_text = ""
+        try:
+            contents = types.Content(parts=[
+                types.Part(file_data=types.FileData(
+                    file_uri=getattr(uploaded, "uri", getattr(uploaded, "name", None)),
+                    mime_type=mime_type or None,
+                )),
+                types.Part(text=prompt),
+            ])
+            response = gemini_client.models.generate_content(model=model, contents=contents)
+            raw_text = getattr(response, "text", "") or ""
+        except Exception as exc:
+            logger.warning("generate_content(parts=…) failed; trying fallback: %s", exc)
+            try:
+                response = gemini_client.models.generate_content(
+                    model=model,
+                    contents=[uploaded, prompt],
+                )
+                raw_text = getattr(response, "text", "") or ""
+            except Exception as exc2:
+                logger.error("Gemini generate_content failed for %s: %s", source_url, exc2)
+
+        # Best-effort delete uploaded file
+        try:
+            if getattr(uploaded, "name", None) and hasattr(gemini_client.files, "delete"):
+                gemini_client.files.delete(name=uploaded.name)
+        except Exception:
+            pass
+
+        if not raw_text:
+            return fallback_title, ""
+
+        title, content = _split_gemini_title(raw_text, fallback=fallback_title)
+        return title, _clean_text(content)
+
+    except Exception as exc:
+        logger.error("Gemini file extraction failed [%s]: %s", source_url, exc)
+        return fallback_title, ""
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------------------

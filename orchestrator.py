@@ -26,7 +26,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from scraper import PortfolioScraper, ScraperCache, ScrapedDocument
+from scraper import PortfolioScraper, ScraperCache, ScrapedDocument, extract_file_with_gemini
 from chunker import DocumentChunker, DocumentChunk
 from database import FAISSDatabase
 
@@ -308,12 +308,10 @@ class RAGOrchestrator:
 
                 # ── Cache hit: skip Gemini if we already extracted this file ─
                 if self.cache:
-                    cached = self.cache.get_page(url)
+                    cached = self.cache.get_local_file(url)
                     if cached:
-                        cached_content = cached.get("html", "")
-                        from bs4 import BeautifulSoup as _BS
-                        cached_text = _BS(cached_content, "html.parser").get_text() if cached_content.startswith("<") else cached_content
-                        cached_title = cached.get("final_url", file_path.stem)  # we store title in final_url slot
+                        cached_title = cached["title"] or file_path.stem
+                        cached_text  = cached["text"]
                         if cached_text:
                             logger.info("  [folder cache HIT] %s", file_path.name)
                             return self._make_aux_doc(cached_title, section, url, cached_text, "text")
@@ -324,7 +322,9 @@ class RAGOrchestrator:
                     mime_hint = "application/pdf"
 
                 logger.info("  [folder] Gemini extracting %s (%d KB)", file_path.name, len(file_bytes) // 1024)
-                title, content = self.scraper._file_stage3_gemini(
+                title, content = extract_file_with_gemini(
+                    self.scraper.gemini_client,
+                    self.scraper.gemini_model,
                     file_bytes,
                     str(file_path),
                     filename=file_path.name,
@@ -349,14 +349,11 @@ class RAGOrchestrator:
                     return None
 
                 # ── Cache the extracted content so re-runs skip Gemini ────────
-                # We repurpose the page cache: store plain text as "html",
-                # and the document title in the "final_url" slot.
                 if self.cache:
-                    self.cache.set_page(
+                    self.cache.set_local_file(
                         url=url,
-                        final_url=title or file_path.stem,   # title stored here
-                        content=content,                      # plain text (not HTML)
-                        content_type="x-local-file",
+                        title=title or file_path.stem,
+                        text=content,
                     )
 
                 return self._make_aux_doc(
@@ -491,6 +488,13 @@ class RAGOrchestrator:
         docs = clean_docs
         if not docs:
             return 0
+
+        # ── 2. Upsert: remove stale chunks for URLs being re-ingested ────
+        incoming_urls = {d.url for d in docs if d.url}
+        if incoming_urls:
+            deleted = self.db.delete_by_urls(incoming_urls)
+            if deleted:
+                logger.info("_store_docs: upsert removed %d stale chunk(s).", deleted)
 
         chunks = self.chunker.chunk_documents(
             docs,

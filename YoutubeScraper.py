@@ -319,14 +319,6 @@ class YouTubeChannelScraper(BaseScraper):
         print(f"[INFO] Metadata fetched for {len(meta)} videos.")
         return meta
 
-    def _merge_transcript(self, transcript_snippets: List[Dict[str, Any]]) -> str:
-        parts = []
-        for snip in transcript_snippets:
-            text = str(snip.get("text", "")).strip()
-            if text:
-                parts.append(text)
-        return " ".join(parts).strip()
-
     def get_english_transcript(self, video_id: str) -> Optional[str]:
         """
         Returns a single merged transcript string in English.
@@ -334,8 +326,7 @@ class YouTubeChannelScraper(BaseScraper):
         """
         try:
             fetched = self.transcript_api.fetch(video_id, languages=self.transcript_languages)
-            raw = fetched.to_raw_data()
-            result = self._merge_transcript(raw)
+            result = " ".join(s.text for s in fetched).strip()
             print(f"  [TRANSCRIPT] Fetched directly for {video_id} ({len(result)} chars).")
             return result
         except Exception as e:
@@ -347,8 +338,7 @@ class YouTubeChannelScraper(BaseScraper):
             # Try explicit English transcript
             try:
                 transcript = transcript_list.find_transcript(["en"])
-                fetched = transcript.fetch()
-                result = self._merge_transcript(fetched.to_raw_data())
+                result = " ".join(s.text for s in transcript.fetch()).strip()
                 print(f"  [TRANSCRIPT] Found explicit English transcript for {video_id} ({len(result)} chars).")
                 return result
             except Exception as e:
@@ -358,8 +348,7 @@ class YouTubeChannelScraper(BaseScraper):
             for t in transcript_list:
                 try:
                     if getattr(t, "is_translatable", False):
-                        fetched = t.translate("en").fetch()
-                        result = self._merge_transcript(fetched.to_raw_data())
+                        result = " ".join(s.text for s in t.translate("en").fetch()).strip()
                         print(f"  [TRANSCRIPT] Translated to English for {video_id} ({len(result)} chars).")
                         return result
                 except Exception as e:

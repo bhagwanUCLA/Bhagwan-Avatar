@@ -265,7 +265,7 @@
         <option value="video">video</option>
         <option value="general">general</option>
       </select>
-      <label>URLs <span style="color:var(--muted);font-weight:400">(one per row)</span></label>
+      <label>URLs <span style="color:var(--muted);font-weight:400">(paste multiple links separated by spaces, or add new rows)</span></label>
       <div class="video-list" id="video-list">
         <div class="video-row">
           <input type="url" placeholder="https://youtube.com/watch?v=… or playlist URL">
@@ -568,8 +568,13 @@ function removeVideoRow(btn) {
     btn.closest('.video-row').remove();
 }
 async function ingestVideos() {
-  const urls = [...document.querySelectorAll('#video-list input')]
-    .map(i => i.value.trim()).filter(Boolean);
+  let urls = [];
+  document.querySelectorAll('#video-list input').forEach(i => {
+    const val = i.value.trim();
+    if (val) {
+      urls = urls.concat(val.split(/[\s,]+/).filter(Boolean));
+    }
+  });
   if (!urls.length) return showToast('video-toast', 'Add at least one URL.', 'err');
   spin('video-spinner', true);
   showToast('video-toast', 'Ingesting videos… Gemini is transcribing each one.', 'info');
@@ -640,7 +645,8 @@ async function loadIndex() {
 
     let html = '<table class="doc-table"><thead><tr><th>Title</th><th>Section</th><th>Type</th><th>Chunks</th><th class="actions"></th></tr></thead><tbody>';
     docs.forEach(d => {
-      const link = d.url ? `<a href="${d.url}" target="_blank" class="doc-title-link">${esc(d.title)}</a>` : esc(d.title);
+      const isWebUrl = d.url && (d.url.startsWith('https://') || d.url.startsWith('http://'));
+      const link = isWebUrl ? `<a href="${d.url}" target="_blank" class="doc-title-link">${esc(d.title)}</a>` : esc(d.title);
       html += `<tr>
         <td>${link}</td>
         <td><span class="sec-pill" style="cursor:default">${esc(d.section)}</span></td>

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
-Website Scraper — flexible multi-mode pipeline
-================================================
+research_scraper.py — standalone CLI research tool
+====================================================
+Renamed from ProfileScraper.py. This is NOT the production scraper (see scraper.py).
+It is a standalone DuckDuckGo/SerpAPI research CLI used to gather URLs for manual review.
 
 Modes (controlled via CLI):
   --url URL              Scrape a single URL directly.

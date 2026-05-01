@@ -1,12 +1,12 @@
 """
-manage_rag.py
--------------
+delete.py
+---------
 Interactive CLI for inspecting and cleaning the RAG index and scraper cache.
 
 Usage
 -----
-    python manage_rag.py                   # interactive menu
-    python manage_rag.py --index ./rag_index --cache ./scraper_cache
+    python delete.py                   # interactive menu
+    python delete.py --index ./rag_index --cache ./scraper_cache
 
 Main menu
 ---------
@@ -14,11 +14,14 @@ Main menu
   2  Browse & delete by URL
   3  Browse & delete by document title
   4  Browse & delete by doc_type  (text / index / video_summary)
-  5  Delete orphaned cache entries  (in cache but NOT in DB)
-  6  Delete orphaned DB entries     (in DB but NOT in cache)
+  5  Find orphaned cache entries  (in cache but NOT in DB)
+  6  Find orphaned DB entries     (in DB but NOT in cache)
   7  Purge corrupt cache pages
   8  Manage skip-list
   9  Show stats
+ 10  Quality filter — delete low-quality chunks
+ 11  Deduplicate identical chunks by URL
+ 12  Deduplicate identical chunks by Title
   0  Exit
 """
 
@@ -751,6 +754,46 @@ def action_quality_filter(db: FAISSDatabase, cache: ScraperCache, index_dir: str
     _save_db(db, index_dir)
 
 
+def action_dedup(db: FAISSDatabase, index_dir: str, by_key: str) -> None:
+    _hr()
+    print(_bold(f"Deduplicate chunks by {by_key}"))
+    
+    # Group by key
+    groups = _db_group_by(db, by_key)
+    
+    total_dups = 0
+    to_delete = []
+    
+    for key_val, iids in groups.items():
+        if not key_val or key_val == "?":
+            continue
+            
+        # For this group, find duplicate texts
+        seen_texts = set()
+        for iid in iids:
+            chunk = db._meta[iid]
+            text = getattr(chunk, "raw_content", "") or getattr(chunk, "text", "")
+            if text in seen_texts:
+                to_delete.append(iid)
+                total_dups += 1
+            else:
+                seen_texts.add(text)
+                
+    if not to_delete:
+        print(_green(f"  ✓ No duplicate chunks found when grouping by {by_key}."))
+        return
+        
+    print(f"\n  Found {_red(str(total_dups))} duplicate chunk(s) across {len(groups)} distinct {by_key}(s).")
+    
+    if not _yn(f"  Delete all {total_dups} duplicate chunks from the DB?"):
+        print("  Cancelled.")
+        return
+        
+    removed = _delete_db_iids(db, to_delete)
+    print(_green(f"  ✓ Removed {removed} duplicate chunks from DB."))
+    _save_db(db, index_dir)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="RAG index & cache manager")
     parser.add_argument("--index", default="./rag_index",   help="Path to FAISS index directory")
@@ -804,6 +847,8 @@ def main() -> None:
         ("Manage skip-list",                            lambda: action_skiplist(cache)),
         ("Show stats",                                  lambda: action_stats(db, cache)),
         ("Quality filter — delete low-quality chunks",  lambda: action_quality_filter(db, cache, index_dir)),
+        ("Deduplicate identical chunks by URL",         lambda: action_dedup(db, index_dir, "doc_url")),
+        ("Deduplicate identical chunks by Title",       lambda: action_dedup(db, index_dir, "doc_title")),
     ]
 
     while True:

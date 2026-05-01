@@ -251,6 +251,10 @@ class FAISSDatabase:
         to_del = [iid for iid, c in self._meta.items() if c.doc_url == url]
         return self._remove_int_ids(to_del)
 
+    def delete_by_urls(self, urls: set[str]) -> int:
+        to_del = [iid for iid, c in self._meta.items() if c.doc_url in urls]
+        return self._remove_int_ids(to_del)
+
     def get_indexed_urls(self) -> set[str]:
         return {c.doc_url for c in self._meta.values() if c.doc_url}
 
