@@ -565,6 +565,13 @@ async def startup_event():
     else:
         logger.info("Startup: GCS_BUCKET not set — using local index (local dev mode).")
 
+    # --- 3. Warm up RAG (load FAISS index + rebuild BM25 before first request) ---
+    try:
+        _get_rag()
+        logger.info("Startup: RAG index loaded and ready.")
+    except Exception as exc:
+        logger.error("Startup: RAG warm-up failed — first query will trigger lazy load. Error: %s", exc)
+
 
 @app.get("/")
 def root():
