@@ -83,7 +83,7 @@ class RAGOrchestrator:
         chunk_size: int = 3500,
         chunk_overlap: int = 50,
         dedup_threshold: Optional[float] = None,
-        min_tokens: int = 30,
+        min_tokens: int = 20,
         index_dir: str = "./rag_index",
         cache_dir: Optional[str] = None,
         follow_external: bool = True,

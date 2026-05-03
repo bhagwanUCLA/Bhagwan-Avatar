@@ -31,8 +31,8 @@ in its .metadata dict for display / citation in the UI.
 
 from __future__ import annotations
 
+import hashlib
 import math
-import uuid
 import logging
 from dataclasses import dataclass, field
 from typing import Optional
@@ -243,7 +243,7 @@ class DocumentChunker:
             full_text = f"{header}\n\n{raw}"
 
             result.append(DocumentChunk(
-                chunk_id    = str(uuid.uuid4()),
+                chunk_id    = hashlib.md5(f"{doc.url}::{doc.title}::{raw}".encode()).hexdigest(),
                 doc_index   = doc.index,
                 doc_title   = doc.title,
                 section     = doc.section,

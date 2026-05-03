@@ -610,12 +610,14 @@
 
     /* ── Mobile ───────────────────────────────────────────────────── */
     @media (max-width: 600px) {
+      :root             { --header-h: 60px; }
       html, body        { font-size: 16px; }
-      .hero-greeting    { font-size: 17px; }
-      .hero-sub         { font-size: 14px; }
-      .hero-name        { font-size: 17px; }
-      .hero-avatar      { width: 88px; height: 88px; }
-      #thread           { padding: 14px 12px 10px; gap: 16px; }
+      .hero-avatar      { width: 120px; height: 120px; margin-bottom: 24px; }
+      .hero-greeting    { font-size: 21px; }
+      .hero-sub         { font-size: 16px; margin-bottom: 32px; }
+      .hero-name        { font-size: 19px; }
+      #hero-input-wrap  { margin-top: 36px; }
+      #thread           { padding: 68px 12px 10px; gap: 16px; }
       .bubble-user      { max-width: 88%; font-size: 15px; padding: 11px 15px; }
       .bubble-text      { font-size: 15px; line-height: 1.7; }
       .bubble-assistant { max-width: 100%; }
@@ -625,7 +627,7 @@
       .thinking         { font-size: 15px; gap: 4px; }
       .thinking span    { width: 6px; height: 6px; }
       #query-input-hero,
-      #query-input      { font-size: 16px; }
+      #query-input      { font-size: 16px; padding: 6px 0; }
 
       #app {
         min-height: -webkit-fill-available;
@@ -635,12 +637,9 @@
         bottom: 0;
         padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
       }
-      #send-row {
-        padding: 12px 12px 12px 16px;
-        border-radius: 18px;
-      }
-      #query-input { padding: 6px 0; }
-      .btn-send-circle { width: 42px; height: 42px; }
+      #send-row-hero,
+      #send-row         { padding: 10px 10px 10px 16px; border-radius: 18px; }
+      .btn-send-circle  { width: 40px; height: 40px; }
     }
   </style>
 </head>

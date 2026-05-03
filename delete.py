@@ -754,6 +754,66 @@ def action_quality_filter(db: FAISSDatabase, cache: ScraperCache, index_dir: str
     _save_db(db, index_dir)
 
 
+def action_dedup_by_content(db: FAISSDatabase, index_dir: str) -> None:
+    _hr()
+    print(_bold("Deduplicate identical chunks by content"))
+
+    # Group iids by exact content
+    content_groups: dict[str, list[int]] = defaultdict(list)
+    for iid, chunk in db._meta.items():
+        text = (getattr(chunk, "raw_content", "") or getattr(chunk, "text", "")).strip()
+        if text:
+            content_groups[text].append(iid)
+
+    duplicates = {text: iids for text, iids in content_groups.items() if len(iids) > 1}
+    if not duplicates:
+        print(_green("  ✓ No duplicate chunks found."))
+        return
+
+    print(f"\n  Found {_red(str(len(duplicates)))} group(s) of identical content.\n")
+
+    all_to_delete = []
+    skipped = 0
+
+    for idx, (text, iids) in enumerate(duplicates.items(), 1):
+        _hr()
+        print(_bold(f"  Group {idx}/{len(duplicates)}  —  {len(iids)} copies\n"))
+        print(f"  Content preview:\n  {_dim(text[:200].replace(chr(10), ' '))}\n")
+
+        options = []
+        for iid in iids:
+            c = db._meta[iid]
+            options.append(
+                f"section={_amber(c.section or '?')}  "
+                f"title={c.doc_title or '?'}  "
+                f"url={_dim((c.doc_url or '?')[:60])}"
+            )
+
+        print("  Which copy do you want to KEEP?\n")
+        keep_idx = _pick(options, "Keep")
+        if keep_idx is None:
+            print(_dim("  Skipped."))
+            skipped += 1
+            continue
+
+        to_delete = [iid for i, iid in enumerate(iids) if i != keep_idx]
+        all_to_delete.extend(to_delete)
+        print(_green(f"  ✓ Will delete {len(to_delete)} copy/copies."))
+
+    if not all_to_delete:
+        print(_dim(f"\n  Nothing to delete ({skipped} group(s) skipped)."))
+        return
+
+    print(f"\n  Total to delete: {_red(str(len(all_to_delete)))} chunk(s)  ({skipped} group(s) skipped).")
+    if not _yn("  Confirm deletion?"):
+        print("  Cancelled.")
+        return
+
+    removed = _delete_db_iids(db, all_to_delete)
+    print(_green(f"  ✓ Removed {removed} duplicate chunks from DB."))
+    _save_db(db, index_dir)
+
+
 def action_dedup(db: FAISSDatabase, index_dir: str, by_key: str) -> None:
     _hr()
     print(_bold(f"Deduplicate chunks by {by_key}"))
@@ -848,7 +908,8 @@ def main() -> None:
         ("Show stats",                                  lambda: action_stats(db, cache)),
         ("Quality filter — delete low-quality chunks",  lambda: action_quality_filter(db, cache, index_dir)),
         ("Deduplicate identical chunks by URL",         lambda: action_dedup(db, index_dir, "doc_url")),
-        ("Deduplicate identical chunks by Title",       lambda: action_dedup(db, index_dir, "doc_title")),
+        ("Deduplicate identical chunks by Title",        lambda: action_dedup(db, index_dir, "doc_title")),
+        ("Deduplicate identical chunks by content",      lambda: action_dedup_by_content(db, index_dir)),
     ]
 
     while True:
